@@ -2,7 +2,7 @@
 
 use std::{fmt::Display, io::Write};
 
-pub const NUM_COLORS: u8 = 16;
+pub const NUM_COLORS: u8 = 8;
 pub const NUM_FIELDS: u32 = 6;
 pub type ColorBitmask = u8;
 
@@ -56,21 +56,19 @@ impl<const FIELDS: usize> Guess<FIELDS> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Evaluation<const FIELDS: usize> {
     correct_color: u32,
-    correct_color_and_position: u32,
+    exact: u32,
 }
 
 impl<const FIELDS: usize> Evaluation<FIELDS> {
     const MAX_GAUSS: usize = (FIELDS as usize + 2) * (FIELDS + 1) as usize / 2;
-    fn lut() -> [usize; FIELDS] {
-        std::array::from_fn(|i| (i + 3) * (i + 2) / 2 - 1)
+    #[inline]
+    const fn lut_for_index(i: u32) -> u32 {
+        (i + 2) * (i + 1) / 2
     }
+    #[inline]
     pub fn to_u32(&self) -> u32 {
-        if self.correct_color == FIELDS as u32 {
-            return Evaluation::<FIELDS>::MAX_GAUSS as u32 - 1;
-        }
-        Evaluation::<FIELDS>::MAX_GAUSS as u32 + self.correct_color_and_position
-            - 1
-            - Evaluation::<FIELDS>::lut()[FIELDS - 1 - self.correct_color as usize] as u32
+        Self::MAX_GAUSS as u32 + self.exact
+            - Self::lut_for_index(FIELDS as u32 - self.correct_color)
     }
 }
 
@@ -150,7 +148,7 @@ pub fn evaluate<const FIELDS: usize>(
     assert!(exact_matches + inexact_matches <= FIELDS as u32);
     Evaluation {
         correct_color: inexact_matches,
-        correct_color_and_position: exact_matches,
+        exact: exact_matches,
     }
 }
 
@@ -198,8 +196,7 @@ impl<const FIELDS: usize, const COLORS: u8> SimpleGuesser<FIELDS, COLORS> {
     fn code_is_valid(&self, history: &[Entry<FIELDS>], current_guess: Guess<FIELDS>) -> bool {
         for entry in history {
             debug_assert!(
-                entry.evaluation.correct_color + entry.evaluation.correct_color_and_position
-                    <= FIELDS as u32,
+                entry.evaluation.correct_color + entry.evaluation.exact <= FIELDS as u32,
                 "The provided evaluation was not valid"
             );
             if !(evaluate(current_guess, entry.guess) == entry.evaluation) {
@@ -242,7 +239,7 @@ fn interactive() {
             guess: next_guess,
             evaluation: Evaluation {
                 correct_color: colors,
-                correct_color_and_position: exact_matches,
+                exact: exact_matches,
             },
         });
     }
@@ -289,7 +286,7 @@ mod test {
             result,
             Evaluation {
                 correct_color: 1,
-                correct_color_and_position: 2
+                exact: 2
             }
         );
     }
@@ -303,7 +300,7 @@ mod test {
             result,
             Evaluation {
                 correct_color: 3,
-                correct_color_and_position: 2
+                exact: 2
             }
         );
     }
@@ -350,7 +347,7 @@ mod test {
     fn evaluation_to_u32_one_zero() {
         let evaluation: Evaluation<3> = Evaluation {
             correct_color: 1,
-            correct_color_and_position: 0,
+            exact: 0,
         };
         let result = evaluation.to_u32();
         assert_eq!(result, 4);
@@ -359,7 +356,7 @@ mod test {
     fn evaluation_to_u32_zero_zero() {
         let evaluation: Evaluation<3> = Evaluation {
             correct_color: 0,
-            correct_color_and_position: 0,
+            exact: 0,
         };
         let result = evaluation.to_u32();
         assert_eq!(result, 0);
@@ -368,7 +365,7 @@ mod test {
     fn evaluation_to_u32_zero_one() {
         let evaluation: Evaluation<3> = Evaluation {
             correct_color: 0,
-            correct_color_and_position: 1,
+            exact: 1,
         };
         let result = evaluation.to_u32();
         assert_eq!(result, 1);
@@ -377,7 +374,7 @@ mod test {
     fn evaluation_to_u32_one_two() {
         let evaluation: Evaluation<3> = Evaluation {
             correct_color: 1,
-            correct_color_and_position: 2,
+            exact: 2,
         };
         let result = evaluation.to_u32();
         assert_eq!(result, 6);
@@ -386,7 +383,7 @@ mod test {
     fn evaluation_to_u32_two_one() {
         let evaluation: Evaluation<3> = Evaluation {
             correct_color: 2,
-            correct_color_and_position: 1,
+            exact: 1,
         };
         let result = evaluation.to_u32();
         assert_eq!(result, 8);
@@ -395,7 +392,7 @@ mod test {
     fn evaluation_to_u32_three_zero() {
         let evaluation: Evaluation<3> = Evaluation {
             correct_color: 3,
-            correct_color_and_position: 0,
+            exact: 0,
         };
         let result = evaluation.to_u32();
         assert_eq!(result, 9);
@@ -404,7 +401,7 @@ mod test {
     fn evaluation_to_u32_four_fields_one_three() {
         let evaluation: Evaluation<4> = Evaluation {
             correct_color: 1,
-            correct_color_and_position: 3,
+            exact: 3,
         };
         let result = evaluation.to_u32();
         assert_eq!(result, 8);
