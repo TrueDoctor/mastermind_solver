@@ -1,3 +1,5 @@
+#![feature(test)]
+
 use std::{fmt::Display, io::Write};
 
 pub const NUM_COLORS: u8 = 16;
@@ -160,15 +162,15 @@ impl<const FIELDS: usize> Solver<FIELDS> for DummyGuesser<FIELDS> {
     }
 }
 
-struct SimpleGuesser<const FIELDS: usize>;
+struct SimpleGuesser<const FIELDS: usize, const COLORS: u8>;
 
-impl<const FIELDS: usize> Solver<FIELDS> for SimpleGuesser<FIELDS> {
+impl<const FIELDS: usize, const COLORS: u8> Solver<FIELDS> for SimpleGuesser<FIELDS, COLORS> {
     fn guess(&mut self, history: &[Entry<FIELDS>]) -> Guess<FIELDS> {
         let codes = self.generate_valid_codes(history);
         #[cfg(feature = "laura")]
-        let iter = CodeIterator::<FIELDS, NUM_COLORS>::default();
+        let iter = CodeIterator::<FIELDS, COLORS>::default();
         #[cfg(not(feature = "laura"))]
-        let iter = GuessIterator::<FIELDS, NUM_COLORS>::default();
+        let iter = GuessIterator::<FIELDS, COLORS>::default();
 
         let guess = iter
             .map(|mut guess| {
@@ -192,10 +194,10 @@ impl<const FIELDS: usize> Solver<FIELDS> for SimpleGuesser<FIELDS> {
     }
 }
 
-impl<const FIELDS: usize> SimpleGuesser<FIELDS> {
+impl<const FIELDS: usize, const COLORS: u8> SimpleGuesser<FIELDS, COLORS> {
     fn code_is_valid(&self, history: &[Entry<FIELDS>], current_guess: Guess<FIELDS>) -> bool {
         for entry in history {
-            assert!(
+            debug_assert!(
                 entry.evaluation.correct_color + entry.evaluation.correct_color_and_position
                     <= FIELDS as u32,
                 "The provided evaluation was not valid"
@@ -208,7 +210,7 @@ impl<const FIELDS: usize> SimpleGuesser<FIELDS> {
     }
     fn generate_valid_codes(&self, history: &[Entry<FIELDS>]) -> Vec<Guess<FIELDS>> {
         let mut valid_codes = Vec::new();
-        for code in CodeIterator::<FIELDS, NUM_COLORS>::default() {
+        for code in CodeIterator::<FIELDS, COLORS>::default() {
             if self.code_is_valid(history, code) {
                 valid_codes.push(code);
             }
@@ -218,7 +220,7 @@ impl<const FIELDS: usize> SimpleGuesser<FIELDS> {
 }
 
 fn interactive() {
-    let mut guesser: SimpleGuesser<{ NUM_FIELDS as usize }> = SimpleGuesser;
+    let mut guesser: SimpleGuesser<{ NUM_FIELDS as usize }, { NUM_COLORS }> = SimpleGuesser;
     let mut history = vec![];
     loop {
         let next_guess = guesser.guess(history.as_slice());
@@ -248,7 +250,8 @@ fn interactive() {
 
 fn main() {
     interactive();
-    let mut guesser = SimpleGuesser;
+    /*
+    let mut guesser: SimpleGuesser<4, NUM_COLORS> = SimpleGuesser;
     let mut history = vec![];
     let code = Guess([3, 9, 15, 4]);
     /*let first_guess = Guess([3, 9, 6, 6]);
@@ -264,7 +267,7 @@ fn main() {
             evaluation: evaluate(code, next_guess),
         });
         println!("I'm guessing: {:?}", next_guess);
-    }
+    }*/
 }
 
 #[cfg(test)]
@@ -406,10 +409,13 @@ mod test {
         let result = evaluation.to_u32();
         assert_eq!(result, 8);
     }
-    /*#[bench]
-    fn guess_with_emty_history() {
-        let mut guesser: SimpleGuesser<6> = SimpleGuesser;
-        let mut history = vec![];
-        let next_guess = guesser.guess(history.as_slice());
-    }*/
+
+    extern crate test;
+    use test::{black_box, Bencher};
+    #[bench]
+    fn guess_with_emty_history(b: &mut Bencher) {
+        let mut guesser: SimpleGuesser<4, 8> = SimpleGuesser;
+        let history = vec![];
+        b.iter(|| black_box(guesser.guess(history.as_slice())));
+    }
 }
