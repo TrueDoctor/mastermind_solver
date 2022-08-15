@@ -2,7 +2,7 @@
 
 use std::{fmt::Display, io::Write};
 
-pub const NUM_COLORS: u32 = 8;
+pub const NUM_COLORS: usize = 8;
 pub const NUM_FIELDS: u32 = 6;
 pub type ColorBitmask = u32;
 
@@ -34,7 +34,7 @@ impl<const FIELDS: usize> Display for Guess<FIELDS> {
 }
 
 impl<const FIELDS: usize> Guess<FIELDS> {
-    fn iter<const NUM_COLORS: u32>(&self) -> GuessIterator<FIELDS, NUM_COLORS> {
+    fn iter<const NUM_COLORS: usize>(&self) -> GuessIterator<FIELDS, NUM_COLORS> {
         GuessIterator {
             current: *self,
             exhausted: false,
@@ -83,24 +83,24 @@ pub struct Entry<const FIELDS: usize> {
 }
 
 #[derive(Default)]
-pub struct GuessIterator<const FIELDS: usize, const COLORS: u32> {
+pub struct GuessIterator<const FIELDS: usize, const COLORS: usize> {
     current: Guess<FIELDS>,
     exhausted: bool,
 }
 
-impl<const FIELDS: usize, const COLORS: u32> Iterator for GuessIterator<FIELDS, COLORS> {
+impl<const FIELDS: usize, const COLORS: usize> Iterator for GuessIterator<FIELDS, COLORS> {
     type Item = Guess<FIELDS>;
     fn next(&mut self) -> Option<Guess<FIELDS>> {
         let old = self.current;
         if self.exhausted {
             return None;
         }
-        if self.current.0.into_iter().all(|x| x == COLORS - 1) {
+        if self.current.0.into_iter().all(|x| x == COLORS as u32 - 1) {
             self.exhausted = true;
         }
         self.current.0[0] += 1;
         for i in 0..(FIELDS - 1) {
-            if self.current.0[i] >= COLORS {
+            if self.current.0[i] >= COLORS as u32 {
                 self.current.0[i] = 0;
                 self.current.0[i + 1] += 1;
             }
@@ -110,11 +110,11 @@ impl<const FIELDS: usize, const COLORS: u32> Iterator for GuessIterator<FIELDS, 
 }
 
 #[derive(Default)]
-pub struct CodeIterator<const FIELDS: usize, const COLORS: u32> {
+pub struct CodeIterator<const FIELDS: usize, const COLORS: usize> {
     current: Guess<FIELDS>,
 }
 
-impl<const FIELDS: usize, const COLORS: u32> Iterator for CodeIterator<FIELDS, COLORS> {
+impl<const FIELDS: usize, const COLORS: usize> Iterator for CodeIterator<FIELDS, COLORS> {
     type Item = Guess<FIELDS>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -131,26 +131,27 @@ pub trait Solver<const FIELDS: usize> {
     fn guess(&mut self, history: &[Entry<FIELDS>]) -> Guess<FIELDS>;
 }
 
-pub fn evaluate<const FIELDS: usize>(
+#[inline(never)]
+pub fn evaluate<const FIELDS: usize, const COLORS: usize>(
     code: Guess<FIELDS>,
     guess: Guess<FIELDS>,
 ) -> Evaluation<FIELDS> {
     let mut exact_matches = 0;
     let mut inexact_matches = 0;
-    let mut colors: ColorBitmask = 0;
+    let mut colors = [0; COLORS];
 
     for color in code.0 {
-        colors |= 1 << color
+        colors[color as usize] = 1
     }
 
     for i in 0..FIELDS {
         if code.0[i] == guess.0[i] {
             exact_matches += 1;
-        } else if colors & (1 << guess.0[i]) > 0 {
+        } else if colors[guess.0[i] as usize] == 1 {
             inexact_matches += 1;
         }
     }
-    assert!(exact_matches + inexact_matches <= FIELDS as u32);
+    debug_assert!(exact_matches + inexact_matches <= FIELDS as u32);
     Evaluation {
         correct_color: inexact_matches,
         exact: exact_matches,
@@ -165,9 +166,9 @@ impl<const FIELDS: usize> Solver<FIELDS> for DummyGuesser<FIELDS> {
     }
 }
 
-struct SimpleGuesser<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize>;
+struct SimpleGuesser<const FIELDS: usize, const COLORS: usize, const PARTITIONS: usize>;
 
-impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize> Solver<FIELDS>
+impl<const FIELDS: usize, const COLORS: usize, const PARTITIONS: usize> Solver<FIELDS>
     for SimpleGuesser<FIELDS, COLORS, PARTITIONS>
 {
     fn guess(&mut self, history: &[Entry<FIELDS>]) -> Guess<FIELDS> {
@@ -181,7 +182,7 @@ impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize> Solver<FIE
             .map(|mut guess| {
                 let mut counts = [0; PARTITIONS];
                 for code in codes.iter() {
-                    let result = evaluate(*code, guess);
+                    let result = evaluate::<FIELDS, COLORS>(*code, guess);
                     counts[result.to_u32() as usize] += 1;
                 }
                 let max = counts.iter().max().unwrap();
@@ -197,7 +198,7 @@ impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize> Solver<FIE
     }
 }
 
-impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize>
+impl<const FIELDS: usize, const COLORS: usize, const PARTITIONS: usize>
     SimpleGuesser<FIELDS, COLORS, PARTITIONS>
 {
     fn code_is_valid(&self, history: &[Entry<FIELDS>], current_guess: Guess<FIELDS>) -> bool {
@@ -206,7 +207,7 @@ impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize>
                 entry.evaluation.correct_color + entry.evaluation.exact <= FIELDS as u32,
                 "The provided evaluation was not valid"
             );
-            if !(evaluate(current_guess, entry.guess) == entry.evaluation) {
+            if !(evaluate::<FIELDS, COLORS>(current_guess, entry.guess) == entry.evaluation) {
                 return false;
             }
         }
@@ -292,7 +293,7 @@ mod test {
     fn evaluate_guess() {
         let code = Guess([1, 2, 3, 4]);
         let guess = Guess([1, 3, 3, 5]);
-        let result = evaluate(code, guess);
+        let result = evaluate::<4, 8>(code, guess);
         assert_eq!(
             result,
             Evaluation {
@@ -306,7 +307,7 @@ mod test {
     fn evaluate_guess_six_element_guess() {
         let code = Guess([1, 2, 3, 4, 6, 7]);
         let guess = Guess([1, 3, 6, 6, 6, 5]);
-        let result = evaluate(code, guess);
+        let result = evaluate::<6, 8>(code, guess);
         assert_eq!(
             result,
             Evaluation {
@@ -339,7 +340,7 @@ mod test {
 
     #[test]
     fn test_color_fields() {
-        assert!(NUM_COLORS >= NUM_FIELDS);
+        assert!(NUM_COLORS >= NUM_FIELDS as usize);
     }
 
     #[test]
