@@ -1,5 +1,7 @@
-pub const NUM_COLORS: u8 = 8;
-pub const NUM_FIELDS: u32 = 4;
+use std::{fmt::Display, io::Write};
+
+pub const NUM_COLORS: u8 = 16;
+pub const NUM_FIELDS: u32 = 6;
 pub type ColorBitmask = u8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -8,6 +10,24 @@ pub struct Guess<const FIELDS: usize>([u8; FIELDS]);
 impl<const FIELDS: usize> Default for Guess<FIELDS> {
     fn default() -> Self {
         Self([0; FIELDS])
+    }
+}
+const NAMES: [&str; 8] = [
+    "rot", "grün", "gelb", "blau", "orange", "pink", "weiß", "grau",
+];
+
+impl<const FIELDS: usize> Display for Guess<FIELDS> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut first = true;
+        for field in self.0.iter() {
+            if first {
+                write!(f, "{}", NAMES[*field as usize])?;
+            } else {
+                write!(f, ", {}", NAMES[*field as usize])?;
+            }
+            first = false;
+        }
+        Ok(())
     }
 }
 
@@ -37,20 +57,18 @@ pub struct Evaluation<const FIELDS: usize> {
     correct_color_and_position: u32,
 }
 
-impl<const FIELDS_PLUS_ONE: usize> Evaluation<FIELDS_PLUS_ONE> {
-    const MAX_GAUSS: usize = (FIELDS_PLUS_ONE as usize + 1) * FIELDS_PLUS_ONE as usize / 2;
-    fn lut() -> [usize; FIELDS_PLUS_ONE] {
-        std::array::from_fn(|i| {
-            println!("{}", ((i + 2) * (i + 1) / 2) - 1);
-            (i + 2) * (i + 1) / 2 - 1
-        })
+impl<const FIELDS: usize> Evaluation<FIELDS> {
+    const MAX_GAUSS: usize = (FIELDS as usize + 2) * (FIELDS + 1) as usize / 2;
+    fn lut() -> [usize; FIELDS] {
+        std::array::from_fn(|i| (i + 3) * (i + 2) / 2 - 1)
     }
     pub fn to_u32(&self) -> u32 {
-        Evaluation::<FIELDS_PLUS_ONE>::MAX_GAUSS as u32
+        if self.correct_color == FIELDS as u32 {
+            return Evaluation::<FIELDS>::MAX_GAUSS as u32 - 1;
+        }
+        Evaluation::<FIELDS>::MAX_GAUSS as u32 + self.correct_color_and_position
             - 1
-            - Evaluation::<FIELDS_PLUS_ONE>::lut()
-                [FIELDS_PLUS_ONE - 1 - self.correct_color as usize] as u32
-            + self.correct_color_and_position
+            - Evaluation::<FIELDS>::lut()[FIELDS - 1 - self.correct_color as usize] as u32
     }
 }
 
@@ -114,7 +132,7 @@ pub fn evaluate<const FIELDS: usize>(
 ) -> Evaluation<FIELDS> {
     let mut exact_matches = 0;
     let mut inexact_matches = 0;
-    let mut colors = 0u8;
+    let mut colors: ColorBitmask = 0;
 
     for color in code.0 {
         colors |= 1 << color
@@ -127,6 +145,7 @@ pub fn evaluate<const FIELDS: usize>(
             inexact_matches += 1;
         }
     }
+    assert!(exact_matches + inexact_matches <= FIELDS as u32);
     Evaluation {
         correct_color: inexact_matches,
         correct_color_and_position: exact_matches,
@@ -145,27 +164,49 @@ struct SimpleGuesser<const FIELDS: usize>;
 
 impl<const FIELDS: usize> Solver<FIELDS> for SimpleGuesser<FIELDS> {
     fn guess(&mut self, history: &[Entry<FIELDS>]) -> Guess<FIELDS> {
-        for guess in GuessIterator::<FIELDS, NUM_COLORS>::default() {
-            for code in self.genrate_valid_codes(history) {
-                let result = evaluate(code, guess);
-                result.to_u32();
-            }
-        }
+        let codes = self.generate_valid_codes(history);
+        #[cfg(feature = "laura")]
+        let iter = CodeIterator::<FIELDS, NUM_COLORS>::default();
+        #[cfg(not(feature = "laura"))]
+        let iter = GuessIterator::<FIELDS, NUM_COLORS>::default();
 
-        Guess([0; FIELDS])
+        let guess = iter
+            .map(|mut guess| {
+                const MAX_GAUSS: usize = Evaluation::<{ NUM_FIELDS as usize }>::MAX_GAUSS;
+
+                let mut counts: [u32; MAX_GAUSS] = [0; MAX_GAUSS];
+                for code in codes.iter() {
+                    let result = evaluate(*code, guess);
+                    counts[result.to_u32() as usize] += 1;
+                }
+                let max = counts.iter().max().unwrap();
+                if *max == 1 {
+                    guess = codes[0];
+                }
+                (guess, *max)
+            })
+            .min_by_key(|(_, max)| *max)
+            .unwrap();
+
+        guess.0
     }
 }
 
 impl<const FIELDS: usize> SimpleGuesser<FIELDS> {
     fn code_is_valid(&self, history: &[Entry<FIELDS>], current_guess: Guess<FIELDS>) -> bool {
         for entry in history {
+            assert!(
+                entry.evaluation.correct_color + entry.evaluation.correct_color_and_position
+                    <= FIELDS as u32,
+                "The provided evaluation was not valid"
+            );
             if !(evaluate(current_guess, entry.guess) == entry.evaluation) {
                 return false;
             }
         }
         true
     }
-    fn genrate_valid_codes(&self, history: &[Entry<FIELDS>]) -> Vec<Guess<FIELDS>> {
+    fn generate_valid_codes(&self, history: &[Entry<FIELDS>]) -> Vec<Guess<FIELDS>> {
         let mut valid_codes = Vec::new();
         for code in CodeIterator::<FIELDS, NUM_COLORS>::default() {
             if self.code_is_valid(history, code) {
@@ -176,17 +217,53 @@ impl<const FIELDS: usize> SimpleGuesser<FIELDS> {
     }
 }
 
+fn interactive() {
+    let mut guesser: SimpleGuesser<{ NUM_FIELDS as usize }> = SimpleGuesser;
+    let mut history = vec![];
+    loop {
+        let next_guess = guesser.guess(history.as_slice());
+        println!("\nI'm guessing: {}", next_guess);
+
+        print!("input correct colors (white):");
+        std::io::stdout().flush().unwrap();
+        let mut colors = String::new();
+        std::io::stdin().read_line(&mut colors).unwrap();
+        let colors: u32 = colors.trim().parse().unwrap();
+
+        print!("input exact_matches (red):");
+        std::io::stdout().flush().unwrap();
+        let mut exact_matches = String::new();
+        std::io::stdin().read_line(&mut exact_matches).unwrap();
+        let exact_matches: u32 = exact_matches.trim().parse().unwrap();
+
+        history.push(Entry {
+            guess: next_guess,
+            evaluation: Evaluation {
+                correct_color: colors,
+                correct_color_and_position: exact_matches,
+            },
+        });
+    }
+}
+
 fn main() {
-    let guess = DummyGuesser.guess(&[]);
-    assert_eq!(guess.0, [0, 0, 0, 0]);
-    let code = Guess([1, 2, 3, 4]);
-    let guess = Guess([1, 3, 3, 5]);
-    let result = evaluate(code, guess);
-
-    println!("Hello, world! {:?}", result);
-
-    for guess in CodeIterator::<3, 4>::default() {
-        println!("{guess:?}");
+    interactive();
+    let mut guesser = SimpleGuesser;
+    let mut history = vec![];
+    let code = Guess([3, 9, 15, 4]);
+    /*let first_guess = Guess([3, 9, 6, 6]);
+    let result = evaluate(code, first_guess);
+    history.push(Entry {
+        guess: first_guess,
+        evaluation: result,
+    });*/
+    for _ in 0..6 {
+        let next_guess = guesser.guess(history.as_slice());
+        history.push(Entry {
+            guess: next_guess,
+            evaluation: evaluate(code, next_guess),
+        });
+        println!("I'm guessing: {:?}", next_guess);
     }
 }
 
@@ -268,7 +345,7 @@ mod test {
 
     #[test]
     fn evaluation_to_u32_one_zero() {
-        let evaluation: Evaluation<4> = Evaluation {
+        let evaluation: Evaluation<3> = Evaluation {
             correct_color: 1,
             correct_color_and_position: 0,
         };
@@ -277,7 +354,7 @@ mod test {
     }
     #[test]
     fn evaluation_to_u32_zero_zero() {
-        let evaluation: Evaluation<4> = Evaluation {
+        let evaluation: Evaluation<3> = Evaluation {
             correct_color: 0,
             correct_color_and_position: 0,
         };
@@ -286,7 +363,7 @@ mod test {
     }
     #[test]
     fn evaluation_to_u32_zero_one() {
-        let evaluation: Evaluation<4> = Evaluation {
+        let evaluation: Evaluation<3> = Evaluation {
             correct_color: 0,
             correct_color_and_position: 1,
         };
@@ -295,11 +372,44 @@ mod test {
     }
     #[test]
     fn evaluation_to_u32_one_two() {
-        let evaluation: Evaluation<4> = Evaluation {
+        let evaluation: Evaluation<3> = Evaluation {
             correct_color: 1,
             correct_color_and_position: 2,
         };
         let result = evaluation.to_u32();
         assert_eq!(result, 6);
     }
+    #[test]
+    fn evaluation_to_u32_two_one() {
+        let evaluation: Evaluation<3> = Evaluation {
+            correct_color: 2,
+            correct_color_and_position: 1,
+        };
+        let result = evaluation.to_u32();
+        assert_eq!(result, 8);
+    }
+    #[test]
+    fn evaluation_to_u32_three_zero() {
+        let evaluation: Evaluation<3> = Evaluation {
+            correct_color: 3,
+            correct_color_and_position: 0,
+        };
+        let result = evaluation.to_u32();
+        assert_eq!(result, 9);
+    }
+    #[test]
+    fn evaluation_to_u32_four_fields_one_three() {
+        let evaluation: Evaluation<4> = Evaluation {
+            correct_color: 1,
+            correct_color_and_position: 3,
+        };
+        let result = evaluation.to_u32();
+        assert_eq!(result, 8);
+    }
+    /*#[bench]
+    fn guess_with_emty_history() {
+        let mut guesser: SimpleGuesser<6> = SimpleGuesser;
+        let mut history = vec![];
+        let next_guess = guesser.guess(history.as_slice());
+    }*/
 }
