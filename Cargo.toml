@@ -10,7 +10,7 @@ laura = []
 default = []
 
 [dependencies]
-rayon = "1.5.3"
+#rayon = "1.5.3"
 
 [profile.release]
 debug = true
