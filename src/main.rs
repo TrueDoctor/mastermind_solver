@@ -3,7 +3,7 @@
 use std::{fmt::Display, io::Write};
 
 pub const NUM_COLORS: u8 = 8;
-pub const NUM_FIELDS: u32 = 6;
+pub const NUM_FIELDS: u8 = 6;
 pub type ColorBitmask = u8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -55,20 +55,24 @@ impl<const FIELDS: usize> Guess<FIELDS> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Evaluation<const FIELDS: usize> {
-    correct_color: u32,
-    exact: u32,
+    correct_color: u8,
+    exact: u8,
+}
+
+#[inline]
+pub const fn max_gauss(i: usize) -> usize {
+    (i + 2) * (i + 1) / 2
 }
 
 impl<const FIELDS: usize> Evaluation<FIELDS> {
-    const MAX_GAUSS: usize = (FIELDS as usize + 2) * (FIELDS + 1) as usize / 2;
+    const MAX_GAUSS: u8 = (FIELDS as u8 + 2) * (FIELDS + 1) as u8 / 2;
     #[inline]
-    const fn lut_for_index(i: u32) -> u32 {
+    const fn lut_for_index(i: u8) -> u8 {
         (i + 2) * (i + 1) / 2
     }
     #[inline]
-    pub fn to_u32(&self) -> u32 {
-        Self::MAX_GAUSS as u32 + self.exact
-            - Self::lut_for_index(FIELDS as u32 - self.correct_color)
+    pub fn to_u8(&self) -> u8 {
+        Self::MAX_GAUSS as u8 + self.exact - Self::lut_for_index(FIELDS as u8 - self.correct_color)
     }
 }
 
@@ -145,7 +149,7 @@ pub fn evaluate<const FIELDS: usize>(
             inexact_matches += 1;
         }
     }
-    assert!(exact_matches + inexact_matches <= FIELDS as u32);
+    assert!(exact_matches + inexact_matches <= FIELDS as u8);
     Evaluation {
         correct_color: inexact_matches,
         exact: exact_matches,
@@ -160,9 +164,11 @@ impl<const FIELDS: usize> Solver<FIELDS> for DummyGuesser<FIELDS> {
     }
 }
 
-struct SimpleGuesser<const FIELDS: usize, const COLORS: u8>;
+struct SimpleGuesser<const FIELDS: usize, const COLORS: u8, const PARTITIONS: usize>;
 
-impl<const FIELDS: usize, const COLORS: u8> Solver<FIELDS> for SimpleGuesser<FIELDS, COLORS> {
+impl<const FIELDS: usize, const COLORS: u8, const PARTITIONS: usize> Solver<FIELDS>
+    for SimpleGuesser<FIELDS, COLORS, PARTITIONS>
+{
     fn guess(&mut self, history: &[Entry<FIELDS>]) -> Guess<FIELDS> {
         let codes = self.generate_valid_codes(history);
         #[cfg(feature = "laura")]
@@ -172,12 +178,10 @@ impl<const FIELDS: usize, const COLORS: u8> Solver<FIELDS> for SimpleGuesser<FIE
 
         let guess = iter
             .map(|mut guess| {
-                const MAX_GAUSS: usize = Evaluation::<{ NUM_FIELDS as usize }>::MAX_GAUSS;
-
-                let mut counts: [u32; MAX_GAUSS] = [0; MAX_GAUSS];
+                let mut counts = [0; PARTITIONS];
                 for code in codes.iter() {
                     let result = evaluate(*code, guess);
-                    counts[result.to_u32() as usize] += 1;
+                    counts[result.to_u8() as usize] += 1;
                 }
                 let max = counts.iter().max().unwrap();
                 if *max == 1 {
@@ -192,11 +196,13 @@ impl<const FIELDS: usize, const COLORS: u8> Solver<FIELDS> for SimpleGuesser<FIE
     }
 }
 
-impl<const FIELDS: usize, const COLORS: u8> SimpleGuesser<FIELDS, COLORS> {
+impl<const FIELDS: usize, const COLORS: u8, const PARTITIONS: usize>
+    SimpleGuesser<FIELDS, COLORS, PARTITIONS>
+{
     fn code_is_valid(&self, history: &[Entry<FIELDS>], current_guess: Guess<FIELDS>) -> bool {
         for entry in history {
             debug_assert!(
-                entry.evaluation.correct_color + entry.evaluation.exact <= FIELDS as u32,
+                entry.evaluation.correct_color + entry.evaluation.exact <= FIELDS as u8,
                 "The provided evaluation was not valid"
             );
             if !(evaluate(current_guess, entry.guess) == entry.evaluation) {
@@ -217,7 +223,11 @@ impl<const FIELDS: usize, const COLORS: u8> SimpleGuesser<FIELDS, COLORS> {
 }
 
 fn interactive() {
-    let mut guesser: SimpleGuesser<{ NUM_FIELDS as usize }, { NUM_COLORS }> = SimpleGuesser;
+    let mut guesser: SimpleGuesser<
+        { NUM_FIELDS as usize },
+        { NUM_COLORS },
+        { max_gauss(NUM_FIELDS as usize) },
+    > = SimpleGuesser;
     let mut history = vec![];
     loop {
         let next_guess = guesser.guess(history.as_slice());
@@ -227,13 +237,13 @@ fn interactive() {
         std::io::stdout().flush().unwrap();
         let mut colors = String::new();
         std::io::stdin().read_line(&mut colors).unwrap();
-        let colors: u32 = colors.trim().parse().unwrap();
+        let colors: u8 = colors.trim().parse().unwrap();
 
         print!("input exact_matches (red):");
         std::io::stdout().flush().unwrap();
         let mut exact_matches = String::new();
         std::io::stdin().read_line(&mut exact_matches).unwrap();
-        let exact_matches: u32 = exact_matches.trim().parse().unwrap();
+        let exact_matches: u8 = exact_matches.trim().parse().unwrap();
 
         history.push(Entry {
             guess: next_guess,
@@ -328,7 +338,7 @@ mod test {
 
     #[test]
     fn test_color_fields() {
-        assert!(NUM_COLORS as u32 >= NUM_FIELDS);
+        assert!(NUM_COLORS >= NUM_FIELDS);
     }
 
     #[test]
@@ -349,7 +359,7 @@ mod test {
             correct_color: 1,
             exact: 0,
         };
-        let result = evaluation.to_u32();
+        let result = evaluation.to_u8();
         assert_eq!(result, 4);
     }
     #[test]
@@ -358,7 +368,7 @@ mod test {
             correct_color: 0,
             exact: 0,
         };
-        let result = evaluation.to_u32();
+        let result = evaluation.to_u8();
         assert_eq!(result, 0);
     }
     #[test]
@@ -367,7 +377,7 @@ mod test {
             correct_color: 0,
             exact: 1,
         };
-        let result = evaluation.to_u32();
+        let result = evaluation.to_u8();
         assert_eq!(result, 1);
     }
     #[test]
@@ -376,7 +386,7 @@ mod test {
             correct_color: 1,
             exact: 2,
         };
-        let result = evaluation.to_u32();
+        let result = evaluation.to_u8();
         assert_eq!(result, 6);
     }
     #[test]
@@ -385,7 +395,7 @@ mod test {
             correct_color: 2,
             exact: 1,
         };
-        let result = evaluation.to_u32();
+        let result = evaluation.to_u8();
         assert_eq!(result, 8);
     }
     #[test]
@@ -394,7 +404,7 @@ mod test {
             correct_color: 3,
             exact: 0,
         };
-        let result = evaluation.to_u32();
+        let result = evaluation.to_u8();
         assert_eq!(result, 9);
     }
     #[test]
@@ -403,7 +413,7 @@ mod test {
             correct_color: 1,
             exact: 3,
         };
-        let result = evaluation.to_u32();
+        let result = evaluation.to_u8();
         assert_eq!(result, 8);
     }
 
@@ -411,7 +421,7 @@ mod test {
     use test::{black_box, Bencher};
     #[bench]
     fn guess_with_emty_history(b: &mut Bencher) {
-        let mut guesser: SimpleGuesser<4, 8> = SimpleGuesser;
+        let mut guesser: SimpleGuesser<4, 8, { max_gauss(4) }> = SimpleGuesser;
         let history = vec![];
         b.iter(|| black_box(guesser.guess(history.as_slice())));
     }
