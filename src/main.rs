@@ -1,9 +1,10 @@
 #![feature(test)]
+use rayon::prelude::*;
 
 use std::{fmt::Display, io::Write};
 
 pub const NUM_COLORS: u32 = 8;
-pub const NUM_FIELDS: u32 = 6;
+pub const NUM_FIELDS: u32 = 4;
 pub type ColorBitmask = u32;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -174,24 +175,27 @@ impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize> Solver<FIE
         let iter = CodeIterator::<FIELDS, COLORS>::default();
         #[cfg(not(feature = "laura"))]
         let iter = GuessIterator::<FIELDS, COLORS>::default();
+        let guesses: Vec<_> = iter.collect();
 
-        let guess = iter
-            .map(|mut guess| {
+        let guess = guesses
+            .par_iter()
+            .map(|guess| {
+                let mut guess = guess;
                 let mut counts = [0; PARTITIONS];
                 for code in codes.iter() {
-                    let result = evaluate(*code, guess);
+                    let result = evaluate(*code, *guess);
                     counts[result.to_u32() as usize] += 1;
                 }
                 let max = counts.iter().max().unwrap();
                 if *max == 1 {
-                    guess = codes[0];
+                    guess = &codes[0];
                 }
                 (guess, *max)
             })
             .min_by_key(|(_, max)| *max)
             .unwrap();
 
-        guess.0
+        *guess.0
     }
 }
 
@@ -422,6 +426,7 @@ mod test {
     fn guess_with_emty_history(b: &mut Bencher) {
         let mut guesser: SimpleGuesser<4, 8, { max_gauss(4) }> = SimpleGuesser;
         let history = vec![];
+        black_box(guesser.guess(history.as_slice()));
         b.iter(|| black_box(guesser.guess(history.as_slice())));
     }
 }
