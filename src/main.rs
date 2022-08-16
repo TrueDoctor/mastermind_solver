@@ -3,8 +3,8 @@ use rayon::prelude::*;
 
 use std::{cmp::Ordering, fmt::Display, io::Write};
 
-pub const NUM_COLORS: u32 = 10;
-pub const NUM_FIELDS: u32 = 6;
+pub const NUM_COLORS: u32 = 8;
+pub const NUM_FIELDS: u32 = 4;
 pub type ColorBitmask = u32;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -15,8 +15,8 @@ impl<const FIELDS: usize> Default for Guess<FIELDS> {
         Self([0; FIELDS])
     }
 }
-const NAMES: [&str; 8] = [
-    "rot", "grün", "gelb", "blau", "orange", "pink", "weiß", "grau",
+const NAMES: [&str; 10] = [
+    "rot", "grün", "gelb", "blau", "orange", "pink", "weiß", "grau", "lila", "schwarz",
 ];
 
 impl<const FIELDS: usize> Display for Guess<FIELDS> {
@@ -208,7 +208,7 @@ impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize> Solver<FIE
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Greater))
             .unwrap();
 
-        println!("avg: {:?}", guess.1);
+        //println!("avg: {:?}", guess.1);
         guess
     }
 }
@@ -275,24 +275,36 @@ fn interactive() {
 fn main() {
     //interactive();
 
-    let mut guesser: SimpleGuesser<
-        { NUM_FIELDS as usize },
-        NUM_COLORS,
-        { max_gauss(NUM_FIELDS as usize) },
-    > = SimpleGuesser;
-    let mut history = vec![];
-    let code = Guess([3, 2, 1, 0, 6, 5]);
-    loop {
-        let (next_guess, score) = guesser.guess(history.as_slice());
-        history.push(Entry {
-            guess: next_guess,
-            evaluation: evaluate(code, next_guess),
-        });
-        println!("I'm guessing: [{}] ({} bit)", next_guess, score);
-        if code == next_guess {
-            break;
+    let mut attempts = 0;
+    let mut codes = 0;
+    for code in CodeIterator::<4, 6>::default() {
+        codes += 1;
+        let mut guesser: SimpleGuesser<
+            { NUM_FIELDS as usize },
+            NUM_COLORS,
+            { max_gauss(NUM_FIELDS as usize) },
+        > = SimpleGuesser;
+        let mut history = vec![];
+        let old_attempts = attempts;
+        loop {
+            attempts += 1;
+            let (next_guess, score) = guesser.guess(history.as_slice());
+            history.push(Entry {
+                guess: next_guess,
+                evaluation: evaluate(code, next_guess),
+            });
+            //println!("I'm guessing: [{}] ({} bit)", next_guess, score);
+            if code == next_guess {
+                println!("Got result in {} attempts", attempts - old_attempts);
+                break;
+            }
         }
     }
+    println!(
+        "average number of attempts: {} total: {}",
+        attempts as f64 / codes as f64,
+        attempts
+    );
 }
 
 #[cfg(test)]
