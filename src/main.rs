@@ -1,10 +1,10 @@
 #![feature(test)]
 use rayon::prelude::*;
 
-use std::{fmt::Display, io::Write};
+use std::{cmp::Ordering, fmt::Display, io::Write};
 
-pub const NUM_COLORS: u32 = 8;
-pub const NUM_FIELDS: u32 = 4;
+pub const NUM_COLORS: u32 = 10;
+pub const NUM_FIELDS: u32 = 6;
 pub type ColorBitmask = u32;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -129,7 +129,7 @@ impl<const FIELDS: usize, const COLORS: u32> Iterator for CodeIterator<FIELDS, C
 }
 
 pub trait Solver<const FIELDS: usize> {
-    fn guess(&mut self, history: &[Entry<FIELDS>]) -> Guess<FIELDS>;
+    fn guess(&mut self, history: &[Entry<FIELDS>]) -> (Guess<FIELDS>, f64);
 }
 
 //#[inline(never)]
@@ -159,8 +159,8 @@ pub fn evaluate<const FIELDS: usize>(
 struct DummyGuesser<const FIELDS: usize>;
 
 impl<const FIELDS: usize> Solver<FIELDS> for DummyGuesser<FIELDS> {
-    fn guess(&mut self, _history: &[Entry<FIELDS>]) -> Guess<FIELDS> {
-        Guess([0; FIELDS])
+    fn guess(&mut self, _history: &[Entry<FIELDS>]) -> (Guess<FIELDS>, f64) {
+        (Guess([0; FIELDS]), 0.)
     }
 }
 
@@ -169,7 +169,7 @@ struct SimpleGuesser<const FIELDS: usize, const COLORS: u32, const PARTITIONS: u
 impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize> Solver<FIELDS>
     for SimpleGuesser<FIELDS, COLORS, PARTITIONS>
 {
-    fn guess(&mut self, history: &[Entry<FIELDS>]) -> Guess<FIELDS> {
+    fn guess(&mut self, history: &[Entry<FIELDS>]) -> (Guess<FIELDS>, f64) {
         let codes = self.generate_valid_codes(history);
         #[cfg(feature = "laura")]
         let iter = CodeIterator::<FIELDS, COLORS>::default();
@@ -180,22 +180,36 @@ impl<const FIELDS: usize, const COLORS: u32, const PARTITIONS: usize> Solver<FIE
         let guess = guesses
             .par_iter()
             .map(|guess| {
-                let mut guess = guess;
+                let guess = *guess;
                 let mut counts = [0; PARTITIONS];
                 for code in codes.iter() {
-                    let result = evaluate(*code, *guess);
-                    counts[result.to_u32() as usize] += 1;
+                    let result = evaluate(*code, guess);
+                    let index = result.to_u32() as usize;
+                    counts[index] += 1;
                 }
-                let max = counts.iter().max().unwrap();
-                if *max == 1 {
-                    guess = &codes[0];
+                let sum: u32 = counts.iter().sum();
+                let mut information: f64 = counts
+                    .iter()
+                    .map(|x| *x as f64 / sum as f64)
+                    .map(|x| -x * x.log2())
+                    .map(|x| if x.is_finite() { x } else { 0. })
+                    .sum();
+                if counts[FIELDS as usize] == 1 && sum == 1 {
+                    information += PARTITIONS as f64 - 1.;
                 }
-                (guess, *max)
+                /*if counts[FIELDS as usize] != 0 {
+                    println!(
+                        "guess: {guess} \t\t\t\t | {information:?}, {}",
+                        counts[FIELDS]
+                    );
+                }*/
+                (guess, information)
             })
-            .min_by_key(|(_, max)| *max)
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Greater))
             .unwrap();
 
-        *guess.0
+        println!("avg: {:?}", guess.1);
+        guess
     }
 }
 
@@ -233,7 +247,7 @@ fn interactive() {
     > = SimpleGuesser;
     let mut history = vec![];
     loop {
-        let next_guess = guesser.guess(history.as_slice());
+        let (next_guess, _score) = guesser.guess(history.as_slice());
         println!("\nI'm guessing: {}", next_guess);
 
         print!("input correct colors (white):");
@@ -259,25 +273,26 @@ fn interactive() {
 }
 
 fn main() {
-    interactive();
-    /*
-    let mut guesser: SimpleGuesser<4, NUM_COLORS> = SimpleGuesser;
+    //interactive();
+
+    let mut guesser: SimpleGuesser<
+        { NUM_FIELDS as usize },
+        NUM_COLORS,
+        { max_gauss(NUM_FIELDS as usize) },
+    > = SimpleGuesser;
     let mut history = vec![];
-    let code = Guess([3, 9, 15, 4]);
-    /*let first_guess = Guess([3, 9, 6, 6]);
-    let result = evaluate(code, first_guess);
-    history.push(Entry {
-        guess: first_guess,
-        evaluation: result,
-    });*/
-    for _ in 0..6 {
-        let next_guess = guesser.guess(history.as_slice());
+    let code = Guess([3, 2, 1, 0, 6, 5]);
+    loop {
+        let (next_guess, score) = guesser.guess(history.as_slice());
         history.push(Entry {
             guess: next_guess,
             evaluation: evaluate(code, next_guess),
         });
-        println!("I'm guessing: {:?}", next_guess);
-    }*/
+        println!("I'm guessing: [{}] ({} bit)", next_guess, score);
+        if code == next_guess {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -287,7 +302,7 @@ mod test {
     #[test]
     fn dummy_guesser() {
         let guess = DummyGuesser.guess(&[]);
-        assert_eq!(guess.0, [0, 0, 0, 0]);
+        assert_eq!(guess.0 .0, [0, 0, 0, 0]);
     }
 
     #[test]
